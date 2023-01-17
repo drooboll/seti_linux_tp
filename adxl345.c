@@ -1,5 +1,12 @@
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/of.h>
+#include <linux/i2c.h>
+
 #include "adxl345.h"
 
+static int dev_count = 0;
 
 static int ADXL345_read_reg(struct i2c_client *client, adxl_reg_t reg, uint8_t* data)
 {
@@ -109,6 +116,26 @@ const struct i2c_device_id *id)
 
     printk(KERN_WARNING "ADXL345 setup success\n");
 
+
+    struct adxl345_device* dev = (struct adxl345_device*) kmalloc(sizeof(struct adxl345_device), GFP_KERNEL);
+    struct file_operations* file_operations = (struct file_operations*) kmalloc(sizeof(struct file_operations), GFP_KERNEL);
+    char* name_buf = kasprintf(GFP_KERNEL, "adxl345-%d", dev_count);
+
+    if (dev == NULL || name_buf == NULL)
+    {
+        printk(KERN_ERR "ADXL345 error memory allocation\n");
+        return -1;
+    } 
+
+    dev->miscdev.minor = MISC_DYNAMIC_MINOR;
+    dev->miscdev.name = name_buf;
+    dev->miscdev.parent = &(client->dev);
+    //dev->miscdev.fops =;
+    i2c_set_clientdata(client, dev);
+
+    misc_register(&(dev->miscdev));
+
+    dev_count += 1;
     return 0;
 }
 

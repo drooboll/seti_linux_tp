@@ -1,10 +1,6 @@
-#include <linux/init.h>
-#include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/of.h>
-#include <linux/i2c.h>
+#include <linux/miscdevice.h>
 
-#
+#define FILENAME_MAX_LEN 10
 
 typedef enum {
     ADXL345_DEVID_REG = 0x00,
@@ -20,3 +16,7 @@ typedef struct {
     adxl_reg_t reg;
     uint8_t value;
 } adxl_reg_pair_t;
+
+typedef struct adxl345_device {
+    struct miscdevice miscdev;
+};
