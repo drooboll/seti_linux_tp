@@ -8,6 +8,7 @@
 #include "adxl345.h"
 
 static int dev_count = 0;
+adxl_axis_t axis = ADXL345_AXIS_X;
 
 static int ADXL345_read_reg(struct i2c_client *client, adxl_reg_t reg, uint8_t* data)
 {
@@ -123,6 +124,7 @@ static int ADXL345_read_axis(struct i2c_client *client, int16_t* buf)
 
 struct file_operations fops = {
     .read = adxl345_read,
+    .unlocked_ioctl = adxl345_ioctl
 };
 
 static int ADXL345_probe(struct i2c_client *client,
@@ -151,7 +153,6 @@ const struct i2c_device_id *id)
     }
 
     printk(KERN_INFO "ADXL345 setup success\n");
-
 
     struct adxl345_device* dev = kmalloc(sizeof(struct adxl345_device), GFP_KERNEL);
 
@@ -199,8 +200,8 @@ static int ADXL345_remove(struct i2c_client *client)
     struct adxl345_device* dev = i2c_get_clientdata(client);
 
     misc_deregister(&(dev->miscdev));
-    //kfree(dev->miscdev.name);
-    //kfree(dev);
+    kfree(dev->miscdev.name);
+    kfree(dev);
 
     printk(KERN_INFO "ADXL345 disconnected\n");
     return 0;
@@ -264,11 +265,10 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
         printk(KERN_WARNING "Cannot read data from device, error %d\n", ret);
     }
 
+    printk(KERN_INFO "Axis read: %d\n", axis);
     printk(KERN_INFO "X data: %hi\n", data[0]);
     printk(KERN_INFO "Y data: %hi\n", data[1]);
     printk(KERN_INFO "Z data: %hi\n", data[2]);
-
-    adxl_axis_t axis = ADXL345_AXIS_X;
 
     if (copy_to_user(buf, (uint8_t*) data + (size_t) axis, 2))
     {
@@ -278,6 +278,26 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
     return 2;
 }
 
+long adxl345_ioctl(struct file* file, unsigned int cmd, unsigned long arg)
+{
+    printk(KERN_INFO "Command data: %x\n", cmd);
+
+    switch (cmd)
+    {
+        case _IOW(10, ADXL345_AXIS_X, uint8_t):
+            axis = (adxl_axis_t) ADXL345_AXIS_X;
+            return 0;
+        case _IOW(10, ADXL345_AXIS_Y, uint8_t):
+            axis = (adxl_axis_t) ADXL345_AXIS_Y;
+            return 0;
+        case _IOW(10, ADXL345_AXIS_Z, uint8_t):
+            axis = (adxl_axis_t) ADXL345_AXIS_Z;
+            return 0;
+        default:
+            printk(KERN_WARNING "ADXL345 illegal ioctl command: %d\n", cmd);
+            return -EINVAL;
+    }
+}
 
 module_i2c_driver(ADXL345_driver);
 

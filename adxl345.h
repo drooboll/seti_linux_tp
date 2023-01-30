@@ -24,14 +24,19 @@ typedef enum {
     ADXL345_AXIS_Z = 4
 } adxl_axis_t;
 
-
 typedef struct {
     adxl_reg_t reg;
     uint8_t value;
 } adxl_reg_pair_t;
+
+typedef struct {
+    pid_t pid;
+    adxl_axis_t axis;
+} adxl_association_t;
 
 struct adxl345_device {
     struct miscdevice miscdev;
 };
 
 ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t * f_pos);
+long adxl345_ioctl(struct file* file, unsigned int cmd, unsigned long arg);
