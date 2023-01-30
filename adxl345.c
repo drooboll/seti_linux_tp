@@ -10,6 +10,87 @@
 static int dev_count = 0;
 adxl_axis_t axis = ADXL345_AXIS_X;
 
+struct adxl_association_s* subscribers = NULL;
+
+static struct adxl_association_s* find_subscriber(pid_t pid)
+{
+    struct adxl_association_s* curr = subscribers;
+
+    while (curr != NULL)
+    {
+        if (curr->pid == pid)
+        {
+            return curr;
+        }
+
+        curr = curr->next;
+    }
+
+    return NULL;
+}
+
+static struct adxl_association_s* last_subscriber(void)
+{
+    struct adxl_association_s* curr = subscribers;
+
+    while (curr->next != NULL)
+    {
+        curr = curr->next;
+    }
+
+    return curr;
+}   
+
+static void add_subscriber(struct adxl_association_s* sub)
+{
+    struct adxl_association_s* curr = subscribers;
+
+    if (subscribers == NULL)
+    {
+        subscribers = sub;
+        return;
+    }
+
+    while (curr->next != NULL)
+    {
+        curr = curr->next;
+    }
+
+    curr->next = sub;
+}
+
+static void remove_subscriber(struct adxl_association_s* sub)
+{
+    struct adxl_association_s* curr = subscribers;
+    struct adxl_association_s* prev = subscribers;
+
+    if (sub == subscribers)
+    {
+        subscribers = sub->next;
+
+        return;
+    }
+
+    while (curr != NULL)
+    {
+        if (curr->next == sub)
+        {
+            if (sub->next == NULL)
+            {
+                curr->next = NULL;
+            } else {
+                curr->next = sub->next;
+            }
+
+            return;
+        }
+
+        prev = curr;
+        curr = curr->next;
+    }
+
+}
+
 static int ADXL345_read_reg(struct i2c_client *client, adxl_reg_t reg, uint8_t* data)
 {
     struct i2c_msg msg[2] = {
@@ -203,6 +284,15 @@ static int ADXL345_remove(struct i2c_client *client)
     kfree(dev->miscdev.name);
     kfree(dev);
 
+    struct adxl_association_s* last = last_subscriber();
+
+    while (last != NULL)
+    {
+        remove_subscriber(last);
+        kfree(last);
+        last = last_subscriber();
+    }
+
     printk(KERN_INFO "ADXL345 disconnected\n");
     return 0;
 }
@@ -270,7 +360,16 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
     printk(KERN_INFO "Y data: %hi\n", data[1]);
     printk(KERN_INFO "Z data: %hi\n", data[2]);
 
-    if (copy_to_user(buf, (uint8_t*) data + (size_t) axis, 2))
+    pid_t pid = current->pid;
+    struct adxl_association_s* sub = find_subscriber(pid);
+
+    if (sub == NULL)
+    {
+        printk(KERN_ERR "READ called, but pid %d is not registered!\n", pid);
+        return -ESRCH;
+    }
+
+    if (copy_to_user(buf, (uint8_t*) data + (size_t) sub->axis, 2))
     {
         return -EFAULT;
     }
@@ -282,21 +381,64 @@ long adxl345_ioctl(struct file* file, unsigned int cmd, unsigned long arg)
 {
     printk(KERN_INFO "Command data: %x\n", cmd);
 
+    pid_t pid = current->pid;
+    struct adxl_association_s* sub = find_subscriber(pid);
+
+    if (sub == NULL)
+    {
+        printk(KERN_ERR "IOCTL called, but pid %d is not registered!\n", pid);
+        return -ESRCH;
+    }
+
     switch (cmd)
     {
-        case _IOW(10, ADXL345_AXIS_X, uint8_t):
-            axis = (adxl_axis_t) ADXL345_AXIS_X;
+        case _IOW(MISC_MAJOR, ADXL345_AXIS_X, uint8_t):
+            sub->axis = (adxl_axis_t) ADXL345_AXIS_X;
             return 0;
-        case _IOW(10, ADXL345_AXIS_Y, uint8_t):
-            axis = (adxl_axis_t) ADXL345_AXIS_Y;
+        case _IOW(MISC_MAJOR, ADXL345_AXIS_Y, uint8_t):
+            sub->axis = (adxl_axis_t) ADXL345_AXIS_Y;
             return 0;
-        case _IOW(10, ADXL345_AXIS_Z, uint8_t):
-            axis = (adxl_axis_t) ADXL345_AXIS_Z;
+        case _IOW(MISC_MAJOR, ADXL345_AXIS_Z, uint8_t):
+            sub->axis = (adxl_axis_t) ADXL345_AXIS_Z;
             return 0;
         default:
             printk(KERN_WARNING "ADXL345 illegal ioctl command: %d\n", cmd);
             return -EINVAL;
     }
+}
+
+int adxl345_open(struct inode * inode, struct file * file)
+{
+    // If the process opens our file 2 times,
+    // it won't be different
+    pid_t pid = current->pid;
+    
+    struct adxl_association_s* assoc = kmalloc(sizeof(struct adxl_association_s), GFP_KERNEL);
+    assoc->pid = pid;
+    assoc->axis = ADXL345_AXIS_X;
+    add_subscriber(assoc);
+
+    return 0;
+}
+
+int adxl345_close(struct inode * inode, struct file * file)
+{
+    // If the process opens our file 2 times,
+    // it won't be different
+    pid_t pid = current->pid;
+    
+    struct adxl_association_s* sub = find_subscriber(pid);
+
+    if (sub == NULL)
+    {
+        printk(KERN_ERR "CLOSE called, but pid %d is not registered!\n", pid);
+        return -ESRCH;
+    }
+
+    remove_subscriber(sub);
+    kfree(sub);
+
+    return 0;
 }
 
 module_i2c_driver(ADXL345_driver);

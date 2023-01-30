@@ -1,6 +1,6 @@
 #include <linux/miscdevice.h>
 
-#define FILENAME_MAX_LEN 10
+#define MISC_MAJOR 10
 
 typedef enum {
     ADXL345_DEVID_REG = 0x00,
@@ -29,10 +29,11 @@ typedef struct {
     uint8_t value;
 } adxl_reg_pair_t;
 
-typedef struct {
+struct adxl_association_s {
     pid_t pid;
     adxl_axis_t axis;
-} adxl_association_t;
+    struct adxl_association_s* next;
+};
 
 struct adxl345_device {
     struct miscdevice miscdev;
@@ -40,3 +41,4 @@ struct adxl345_device {
 
 ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t * f_pos);
 long adxl345_ioctl(struct file* file, unsigned int cmd, unsigned long arg);
+int adxl345_open(struct inode * inode, struct file * file);
