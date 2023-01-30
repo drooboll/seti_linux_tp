@@ -154,10 +154,11 @@ static int ADXL345_setup(struct i2c_client *client)
 
     for (i = 0; i < 5; ++i)
     {
+        uint8_t value;
         ret = ADXL345_write_reg(client, setup[i].reg, &(setup[i].value));
 
         //Debug
-        uint8_t value = setup[i].value;
+        value = setup[i].value;
         ADXL345_read_reg(client, setup[i].reg, &(setup[i].value));
 
         printk(KERN_INFO "ADX345 setup: reg 0x%X written: 0x%X, read 0x%X\n", setup[i].reg, value, setup[i].value);
@@ -211,11 +212,15 @@ struct file_operations fops = {
 static int ADXL345_probe(struct i2c_client *client,
 const struct i2c_device_id *id)
 {
+    uint8_t data;
+    int ret;
+    struct adxl345_device* dev;
+    char* name_buf;
+    int misc;
+
     printk(KERN_INFO "ADXL345 connected\n");
 
-    uint8_t data;
-
-    int ret = ADXL345_read_reg(client, ADXL345_DEVID_REG, &data);
+    ret = ADXL345_read_reg(client, ADXL345_DEVID_REG, &data);
 
     if (ret < 0)
     {
@@ -235,9 +240,9 @@ const struct i2c_device_id *id)
 
     printk(KERN_INFO "ADXL345 setup success\n");
 
-    struct adxl345_device* dev = kmalloc(sizeof(struct adxl345_device), GFP_KERNEL);
+    dev = kmalloc(sizeof(struct adxl345_device), GFP_KERNEL);
 
-    char* name_buf = kasprintf(GFP_KERNEL, "adxl345-%d", dev_count);
+    name_buf = kasprintf(GFP_KERNEL, "adxl345-%d", dev_count);
 
     if (dev == NULL || name_buf == NULL)
     {
@@ -256,7 +261,7 @@ const struct i2c_device_id *id)
 
     printk(KERN_INFO "ADXL345 misc init ok\n");
 
-    int misc = misc_register(&(dev->miscdev));
+    misc = misc_register(&(dev->miscdev));
 
     printk(KERN_INFO "ADXL345 misc register ok\n");
 
@@ -267,9 +272,13 @@ const struct i2c_device_id *id)
 
 static int ADXL345_remove(struct i2c_client *client)
 {
-    uint8_t data = 0;
+    uint8_t data;
+    int ret;
+    struct adxl345_device* dev;
+    struct adxl_association_s* last;
 
-    int ret = ADXL345_write_reg(client, ADXL345_POWER_CTL_REG, &data);
+    data = 0;
+    ret = ADXL345_write_reg(client, ADXL345_POWER_CTL_REG, &data);
 
     if (ret < 0)
     {
@@ -278,13 +287,13 @@ static int ADXL345_remove(struct i2c_client *client)
     }
 
     dev_count -= 1;
-    struct adxl345_device* dev = i2c_get_clientdata(client);
+    dev = i2c_get_clientdata(client);
 
     misc_deregister(&(dev->miscdev));
     kfree(dev->miscdev.name);
     kfree(dev);
 
-    struct adxl_association_s* last = last_subscriber();
+    last = last_subscriber();
 
     while (last != NULL)
     {
@@ -341,14 +350,21 @@ static struct i2c_driver ADXL345_driver = {
 
 ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t * f_pos)
 {
-    struct miscdevice* misc = (struct miscdevice*) (file->private_data);
-    struct adxl345_device* dev = container_of(misc, struct adxl345_device, miscdev);
-    struct i2c_client* client = to_i2c_client(dev->miscdev.parent);
-
-    // Basically we ignore offset, since there's no way back
+    struct miscdevice* misc;
+    struct adxl345_device* dev;
+    struct i2c_client* client;
+    int ret;
+    pid_t pid;
+    struct adxl_association_s* sub;
     int16_t data[3] = {(0)};
 
-    int ret = ADXL345_read_axis(client, data);
+    misc = (struct miscdevice*) (file->private_data);
+    dev = container_of(misc, struct adxl345_device, miscdev);
+    client = to_i2c_client(dev->miscdev.parent);
+
+    // Basically we ignore offset, since there's no way back
+
+    ret = ADXL345_read_axis(client, data);
     
     if (ret < 0)
     {
@@ -360,8 +376,8 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
     printk(KERN_INFO "Y data: %hi\n", data[1]);
     printk(KERN_INFO "Z data: %hi\n", data[2]);
 
-    pid_t pid = current->pid;
-    struct adxl_association_s* sub = find_subscriber(pid);
+    pid = current->pid;
+    sub = find_subscriber(pid);
 
     if (sub == NULL)
     {
@@ -379,10 +395,13 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
 
 long adxl345_ioctl(struct file* file, unsigned int cmd, unsigned long arg)
 {
+    pid_t pid;
+    struct adxl_association_s* sub;
+
     printk(KERN_INFO "Command data: %x\n", cmd);
 
-    pid_t pid = current->pid;
-    struct adxl_association_s* sub = find_subscriber(pid);
+    pid = current->pid;
+    sub = find_subscriber(pid);
 
     if (sub == NULL)
     {
@@ -411,9 +430,12 @@ int adxl345_open(struct inode * inode, struct file * file)
 {
     // If the process opens our file 2 times,
     // it won't be different
-    pid_t pid = current->pid;
+    pid_t pid;
+    struct adxl_association_s* assoc;
+
+    pid = current->pid;
     
-    struct adxl_association_s* assoc = kmalloc(sizeof(struct adxl_association_s), GFP_KERNEL);
+    assoc = kmalloc(sizeof(struct adxl_association_s), GFP_KERNEL);
     assoc->pid = pid;
     assoc->axis = ADXL345_AXIS_X;
     add_subscriber(assoc);
@@ -425,9 +447,11 @@ int adxl345_close(struct inode * inode, struct file * file)
 {
     // If the process opens our file 2 times,
     // it won't be different
-    pid_t pid = current->pid;
+    pid_t pid;
+    struct adxl_association_s* sub;
     
-    struct adxl_association_s* sub = find_subscriber(pid);
+    pid = current->pid;
+    sub = find_subscriber(pid);
 
     if (sub == NULL)
     {
