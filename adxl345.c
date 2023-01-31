@@ -8,7 +8,6 @@
 #include "adxl345.h"
 
 static int dev_count = 0;
-adxl_axis_t axis = ADXL345_AXIS_X;
 
 struct adxl_association_s* subscribers = NULL;
 
@@ -383,7 +382,7 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
         return -ESRCH;
     }
 
-    printk(KERN_INFO "Axis read: %d, X, Y, Z data: %hi, %hi, %hi\n", sub->axis, data[0], data[1], data[2]);
+    printk(KERN_INFO "Read by %d, axis: %d, X, Y, Z data: %hi, %hi, %hi\n", pid, sub->axis, data[0], data[1], data[2]);
 
     if (copy_to_user(buf, (uint8_t*) data + (size_t) sub->axis, 2))
     {
@@ -441,7 +440,7 @@ int adxl345_open(struct inode * inode, struct file * file)
     assoc->pid = pid;
     assoc->axis = ADXL345_AXIS_X;
     assoc->next = NULL;
-    
+
     printk(KERN_INFO "Adding in %d", pid);
     add_subscriber(assoc);
 
