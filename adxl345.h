@@ -42,3 +42,4 @@ struct adxl345_device {
 ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t * f_pos);
 long adxl345_ioctl(struct file* file, unsigned int cmd, unsigned long arg);
 int adxl345_open(struct inode * inode, struct file * file);
+int adxl345_release(struct inode * inode, struct file * file);

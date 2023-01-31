@@ -53,6 +53,7 @@ static void add_subscriber(struct adxl_association_s* sub)
 
     while (curr->next != NULL)
     {
+        printk(KERN_INFO "Curr pid is %d", curr->pid);
         curr = curr->next;
     }
 
@@ -206,7 +207,9 @@ static int ADXL345_read_axis(struct i2c_client *client, int16_t* buf)
 
 struct file_operations fops = {
     .read = adxl345_read,
-    .unlocked_ioctl = adxl345_ioctl
+    .unlocked_ioctl = adxl345_ioctl,
+    .open = adxl345_open,
+    .release = adxl345_release
 };
 
 static int ADXL345_probe(struct i2c_client *client,
@@ -371,11 +374,6 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
         printk(KERN_WARNING "Cannot read data from device, error %d\n", ret);
     }
 
-    printk(KERN_INFO "Axis read: %d\n", axis);
-    printk(KERN_INFO "X data: %hi\n", data[0]);
-    printk(KERN_INFO "Y data: %hi\n", data[1]);
-    printk(KERN_INFO "Z data: %hi\n", data[2]);
-
     pid = current->pid;
     sub = find_subscriber(pid);
 
@@ -384,6 +382,8 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
         printk(KERN_ERR "READ called, but pid %d is not registered!\n", pid);
         return -ESRCH;
     }
+
+    printk(KERN_INFO "Axis read: %d, X, Y, Z data: %hi, %hi, %hi\n", sub->axis, data[0], data[1], data[2]);
 
     if (copy_to_user(buf, (uint8_t*) data + (size_t) sub->axis, 2))
     {
@@ -434,24 +434,31 @@ int adxl345_open(struct inode * inode, struct file * file)
     struct adxl_association_s* assoc;
 
     pid = current->pid;
+
+    printk(KERN_INFO "Open by %d", pid);
     
     assoc = kmalloc(sizeof(struct adxl_association_s), GFP_KERNEL);
     assoc->pid = pid;
     assoc->axis = ADXL345_AXIS_X;
+    assoc->next = NULL;
+    
+    printk(KERN_INFO "Adding in %d", pid);
     add_subscriber(assoc);
 
     return 0;
 }
 
-int adxl345_close(struct inode * inode, struct file * file)
+int adxl345_release(struct inode * inode, struct file * file)
 {
     // If the process opens our file 2 times,
     // it won't be different
     pid_t pid;
     struct adxl_association_s* sub;
-    
+
     pid = current->pid;
     sub = find_subscriber(pid);
+
+    printk(KERN_INFO "Release by %d", pid);
 
     if (sub == NULL)
     {

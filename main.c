@@ -29,59 +29,27 @@ int main(){
         return -1;
     }
 
-    ret = ioctl(fd, _IOW(10, ADXL345_AXIS_X, uint8_t));
+    adxl_axis_t testcase[3] = {ADXL345_AXIS_X, ADXL345_AXIS_Y, ADXL345_AXIS_Z};
 
-    if (ret < 0)
+    for (int i = 0; i < 3; i++)
     {
-        printf("Error encountered ioctl_x: %d\n", ret);
+        ret = ioctl(fd, _IOW(10, testcase[i], uint8_t));
+
+        if (ret < 0) {
+            printf("Error encountered ioctl_x: %d\n", ret);
+        }
+
+        char buffer[2];
+        const int count = 2;
+
+        for (int j = 0; j < count; j++) {
+            ret = read(fd, buffer, 2);
+            short actual_value = buffer[1] << 8 | buffer[0];
+            printf("Read value is : %hi\n", actual_value);
+
+            msleep(40);
+        }
     }
 
-    char buffer[2];
-
-    const int count = 2;
-
-    for (int i = 0; i < count; i++) {
-        ret = read(fd, buffer, 2);
-        short actual_value = buffer[1] << 8 | buffer[0];
-        printf("Read value is : %hi\n", actual_value);
-
-        msleep(40);
-    }
-
-    ret = ioctl(fd, _IOW(10, ADXL345_AXIS_Y, uint8_t));
-
-    if (ret < 0)
-    {
-        printf("Error encountered ioctl_y: %d\n", ret);
-    }
-
-    for (int i = 0; i < count; i++) {
-        ret = read(fd, buffer, 2);
-        short actual_value = buffer[1] << 8 | buffer[0];
-        printf("Read value is : %hi\n", actual_value);
-
-        msleep(40);
-    }
-
-    ret = ioctl(fd, _IOW(10, ADXL345_AXIS_Z, uint8_t));
-
-    if (ret < 0)
-    {
-        printf("Error encountered ioctl_z: %d\n", ret);
-    }
-
-    for (int i = 0; i < count; i++) {
-        ret = read(fd, buffer, 2);
-        short actual_value = buffer[1] << 8 | buffer[0];
-        printf("Read value is : %hi\n", actual_value);
-
-        msleep(40);
-    }
-
-    if (ret < 0)
-    {
-        printf("Error encountered: %d\n", ret);
-    }
-
-    return 0;
+    close(fd);
 }
