@@ -16,13 +16,7 @@ typedef enum {
     ADXL345_AXIS_Z = 4
 } adxl_axis_t;
 
-int msleep(unsigned int tms) {
-  return usleep(tms * 1000);
-}
-
 int main(){
-    pid_t pid = fork();
-
     int fd = open("/dev/adxl345-0", O_RDWR);
     if (fd < 0)
     {
@@ -31,10 +25,7 @@ int main(){
     }
 
     int ret;
-    adxl_axis_t testcase_p[3] = {ADXL345_AXIS_X, ADXL345_AXIS_Y, ADXL345_AXIS_Z};
-    adxl_axis_t testcase_c[3] = {ADXL345_AXIS_Y, ADXL345_AXIS_X, ADXL345_AXIS_Z};
-
-    adxl_axis_t* testcase = (pid == 0) ? testcase_c : testcase_p;
+    adxl_axis_t testcase[3] = {ADXL345_AXIS_X, ADXL345_AXIS_Y, ADXL345_AXIS_Z};
 
     for (int i = 0; i < 3; i++)
     {
@@ -45,14 +36,12 @@ int main(){
         }
 
         char buffer[2];
-        const int count = 1;
+        const int count = 100;
 
         for (int j = 0; j < count; j++) {
             ret = read(fd, buffer, 2);
             short actual_value = buffer[1] << 8 | buffer[0];
             printf("Read value of %d is : %hi\n", getpid(), actual_value);
-
-            msleep(40);
         }
     }
 

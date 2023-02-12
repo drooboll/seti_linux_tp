@@ -4,6 +4,7 @@
 #include <linux/of.h>
 #include <linux/i2c.h>
 #include <linux/fs.h>
+#include <linux/interrupt.h>
 
 #include "adxl345.h"
 
@@ -31,6 +32,11 @@ static struct adxl_association_s* find_subscriber(pid_t pid)
 static struct adxl_association_s* last_subscriber(void)
 {
     struct adxl_association_s* curr = subscribers;
+
+    if (curr == NULL)
+    {
+        return NULL;
+    }
 
     while (curr->next != NULL)
     {
@@ -128,7 +134,7 @@ static int ADXL345_setup(struct i2c_client *client)
             .reg = ADXL345_INT_ENABLE_REG,
             // Disable all ints
             // TODO: make separate enum
-            .value = 0,
+            .value = 1 << 1,
         },
         {
             .reg = ADXL345_DATA_FORMAT_REG,
@@ -137,9 +143,10 @@ static int ADXL345_setup(struct i2c_client *client)
         },
         {
             .reg = ADXL345_FIFO_CTL_REG,
-            // Bypass
+            // Fill untill full
+            // 20 samples max
             // TODO: make separate enum
-            .value = 0,
+            .value = 1 << 7 | WATERFILL_LIMIT,
         },
         {
             .reg = ADXL345_POWER_CTL_REG,
@@ -204,6 +211,11 @@ static int ADXL345_read_axis(struct i2c_client *client, int16_t* buf)
     return ret;
 }
 
+static bool data_is_available(struct adxl345_device* dev)
+{
+    return !kfifo_is_empty(&(dev->fifo_samples));
+}
+
 struct file_operations fops = {
     .read = adxl345_read,
     .unlocked_ioctl = adxl345_ioctl,
@@ -242,7 +254,7 @@ const struct i2c_device_id *id)
 
     printk(KERN_INFO "ADXL345 setup success\n");
 
-    dev = kmalloc(sizeof(struct adxl345_device), GFP_KERNEL);
+    dev = kzalloc(sizeof(struct adxl345_device), GFP_KERNEL);
 
     name_buf = kasprintf(GFP_KERNEL, "adxl345-%d", dev_count);
 
@@ -250,7 +262,9 @@ const struct i2c_device_id *id)
     {
         printk(KERN_ERR "ADXL345 error memory allocation\n");
         return -1;
-    } 
+    }
+
+    INIT_KFIFO(dev->fifo_samples);
 
     printk(KERN_INFO "ADXL345 memory alloc ok\n");
 
@@ -269,6 +283,21 @@ const struct i2c_device_id *id)
 
     dev_count += 1;
     printk(KERN_INFO "ADXL345: init as /dev/%s\n", dev->miscdev.name);
+
+    init_waitqueue_head(&(dev->queue));
+
+    ret = devm_request_threaded_irq(
+        &(client->dev),
+        client->irq,
+        NULL,
+        adxl345_irq,
+        IRQF_ONESHOT,
+        dev->miscdev.name,
+        dev
+    );
+
+    printk(KERN_INFO "IRQ registered: %d\n", ret);
+
     return 0;
 }
 
@@ -291,6 +320,7 @@ static int ADXL345_remove(struct i2c_client *client)
     dev_count -= 1;
     dev = i2c_get_clientdata(client);
 
+    devm_free_irq(&(client->dev), client->irq, dev);
     misc_deregister(&(dev->miscdev));
     kfree(dev->miscdev.name);
     kfree(dev);
@@ -355,23 +385,14 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
     struct miscdevice* misc;
     struct adxl345_device* dev;
     struct i2c_client* client;
-    int ret;
     pid_t pid;
     struct adxl_association_s* sub;
-    int16_t data[3] = {(0)};
+    size_t read_offset;
+    struct adxl345_measurement el;
 
     misc = (struct miscdevice*) (file->private_data);
     dev = container_of(misc, struct adxl345_device, miscdev);
     client = to_i2c_client(dev->miscdev.parent);
-
-    // Basically we ignore offset, since there's no way back
-
-    ret = ADXL345_read_axis(client, data);
-    
-    if (ret < 0)
-    {
-        printk(KERN_WARNING "Cannot read data from device, error %d\n", ret);
-    }
 
     pid = current->pid;
     sub = find_subscriber(pid);
@@ -381,15 +402,41 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
         printk(KERN_ERR "READ called, but pid %d is not registered!\n", pid);
         return -ESRCH;
     }
+    read_offset = 0;
 
-    printk(KERN_INFO "Read by %d, axis: %d, X, Y, Z data: %hi, %hi, %hi\n", pid, sub->axis, data[0], data[1], data[2]);
+    while (read_offset != count){
+        char* data_pointer;
+        int res;
 
-    if (copy_to_user(buf, (uint8_t*) data + (size_t) sub->axis, 2))
-    {
-        return -EFAULT;
+        res = kfifo_get(&(dev->fifo_samples), &el);
+
+        printk(KERN_INFO "In FIFO: %d\n", kfifo_avail(&(dev->fifo_samples)));
+
+        if (res == 0)
+        {
+            printk(KERN_INFO "Not enough data, sleeping\n");
+            wait_event_killable(dev->queue, data_is_available(dev));
+            printk(KERN_INFO "Data available, wake up\n");
+            continue;
+        }
+
+        switch(sub->axis)
+        {
+            case ADXL345_AXIS_X: data_pointer = (char*) &(el.x); break;
+            case ADXL345_AXIS_Y: data_pointer = (char*) &(el.y); break;
+            case ADXL345_AXIS_Z: data_pointer = (char*) &(el.z); break;
+            default: break; // Shouldn't happen
+        }
+
+        if (copy_to_user(buf + read_offset, data_pointer, 2))
+        {
+            return -EFAULT;
+        }
+
+        read_offset += 2;
     }
 
-    return 2;
+    return count;
 }
 
 long adxl345_ioctl(struct file* file, unsigned int cmd, unsigned long arg)
@@ -469,6 +516,32 @@ int adxl345_release(struct inode * inode, struct file * file)
     kfree(sub);
 
     return 0;
+}
+
+irqreturn_t adxl345_irq(int irq, void* dev_id)
+{
+    struct adxl345_device* dev = (struct adxl345_device*) dev_id;
+    struct i2c_client* client = to_i2c_client(dev->miscdev.parent);
+
+    size_t i;
+
+    for (i = 0; i < WATERFILL_LIMIT; ++i)
+    {
+        int16_t buf[3];
+        struct adxl345_measurement meas;
+
+        ADXL345_read_axis(client, buf);
+
+        meas.x = buf[0];
+        meas.y = buf[1];
+        meas.z = buf[2];
+
+        kfifo_put(&(dev->fifo_samples), meas);
+    }
+
+    wake_up(&(dev->queue));
+
+    return IRQ_HANDLED;
 }
 
 module_i2c_driver(ADXL345_driver);

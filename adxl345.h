@@ -1,6 +1,8 @@
 #include <linux/miscdevice.h>
+#include <linux/kfifo.h>
 
 #define MISC_MAJOR 10
+#define WATERFILL_LIMIT 20
 
 typedef enum {
     ADXL345_DEVID_REG = 0x00,
@@ -35,11 +37,20 @@ struct adxl_association_s {
     struct adxl_association_s* next;
 };
 
+struct adxl345_measurement {
+    uint16_t x;
+    uint16_t y;
+    uint16_t z;
+};
+
 struct adxl345_device {
     struct miscdevice miscdev;
+    struct wait_queue_head queue;
+    DECLARE_KFIFO(fifo_samples, struct adxl345_measurement, 64);
 };
 
 ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t * f_pos);
 long adxl345_ioctl(struct file* file, unsigned int cmd, unsigned long arg);
 int adxl345_open(struct inode * inode, struct file * file);
 int adxl345_release(struct inode * inode, struct file * file);
+irqreturn_t adxl345_irq(int irq, void* dev_id);
