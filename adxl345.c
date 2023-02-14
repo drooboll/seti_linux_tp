@@ -11,94 +11,136 @@
 static int dev_count = 0;
 
 struct adxl_association_s* subscribers = NULL;
+DEFINE_MUTEX(i2c_lock);
+DEFINE_MUTEX(list_lock);
+DEFINE_MUTEX(fifo_read_lock);
 
 static struct adxl_association_s* find_subscriber(pid_t pid)
 {
+    int res;
     struct adxl_association_s* curr = subscribers;
+
+    res = mutex_lock_killable(&list_lock);
+
+    if (res != 0){
+        printk(KERN_WARNING "Process with pid %d killed while taking the lock", current->pid);
+        return NULL;
+    }
 
     while (curr != NULL)
     {
-        if (curr->pid == pid)
-        {
-            return curr;
+
+        if (curr->pid == pid){
+            break;
         }
 
         curr = curr->next;
     }
 
-    return NULL;
+    mutex_unlock(&list_lock);
+
+    return curr;
 }
 
 static struct adxl_association_s* last_subscriber(void)
 {
+    int res;
     struct adxl_association_s* curr = subscribers;
 
-    if (curr == NULL)
-    {
+    res = mutex_lock_killable(&list_lock);
+
+    if (res != 0){
+        printk(KERN_WARNING "Process with pid %d killed while taking the lock", current->pid);
         return NULL;
     }
 
-    while (curr->next != NULL)
+    if (curr != NULL)
     {
-        curr = curr->next;
+        while (curr->next != NULL)
+        {
+            curr = curr->next;
+        }
     }
+
+    mutex_unlock(&list_lock);
 
     return curr;
 }   
 
 static void add_subscriber(struct adxl_association_s* sub)
 {
+    int res;
     struct adxl_association_s* curr = subscribers;
+
+    res = mutex_lock_killable(&list_lock);
+
+    if (res != 0){
+        printk(KERN_WARNING "Process with pid %d killed while taking the lock", current->pid);
+        return;
+    }
 
     if (subscribers == NULL)
     {
         subscribers = sub;
-        return;
     }
-
-    while (curr->next != NULL)
+    else 
     {
-        printk(KERN_INFO "Curr pid is %d", curr->pid);
-        curr = curr->next;
+        while (curr->next != NULL)
+        {
+            printk(KERN_INFO "Curr pid is %d\n", curr->pid);
+            curr = curr->next;
+        }
+
+        curr->next = sub;
     }
 
-    curr->next = sub;
+    mutex_unlock(&list_lock);
 }
 
 static void remove_subscriber(struct adxl_association_s* sub)
 {
+    int res;
     struct adxl_association_s* curr = subscribers;
     struct adxl_association_s* prev = subscribers;
+
+    res = mutex_lock_killable(&list_lock);
+
+    if (res != 0){
+        printk(KERN_WARNING "Process with pid %d killed while taking the lock", current->pid);
+        return;
+    }
 
     if (sub == subscribers)
     {
         subscribers = sub->next;
-
-        return;
     }
-
-    while (curr != NULL)
+    else
     {
-        if (curr->next == sub)
+        while (curr != NULL)
         {
-            if (sub->next == NULL)
+            if (curr->next == sub)
             {
-                curr->next = NULL;
-            } else {
-                curr->next = sub->next;
+                if (sub->next == NULL)
+                {
+                    curr->next = NULL;
+                } else {
+                    curr->next = sub->next;
+                }
+
+                break;
             }
 
-            return;
+            prev = curr;
+            curr = curr->next;
         }
-
-        prev = curr;
-        curr = curr->next;
     }
-
+    mutex_unlock(&list_lock);
 }
 
 static int ADXL345_read_reg(struct i2c_client *client, adxl_reg_t reg, uint8_t* data)
 {
+    int res;
+
     struct i2c_msg msg[2] = {
         {
             .addr = client->addr,
@@ -113,14 +155,38 @@ static int ADXL345_read_reg(struct i2c_client *client, adxl_reg_t reg, uint8_t* 
         }
     };
 
-    return i2c_transfer(client->adapter, msg, 2);
+    res = mutex_lock_killable(&i2c_lock);
+
+    if (res != 0){
+        printk(KERN_WARNING "Process with pid %d killed while taking the lock in i2c", current->pid);
+        return res;
+    }
+
+    res = i2c_transfer(client->adapter, msg, 2);
+
+    mutex_unlock(&i2c_lock);
+
+    return res;
 }
 
 static int ADXL345_write_reg(struct i2c_client *client, adxl_reg_t reg, uint8_t* data)
 {
+    int res;
+
     uint8_t transfer[2] = {reg, *data};
 
-    return i2c_master_send(client, transfer, 2);
+    res = mutex_lock_killable(&i2c_lock);
+
+    if (res != 0){
+        printk(KERN_WARNING "Process with pid %d killed while taking the lock in i2c", current->pid);
+        return res;
+    }
+
+    res = i2c_master_send(client, transfer, 2);
+
+    mutex_unlock(&i2c_lock);
+
+    return res;
 }
 
 static int ADXL345_setup(struct i2c_client *client)
@@ -182,6 +248,8 @@ static int ADXL345_setup(struct i2c_client *client)
 
 static int ADXL345_read_axis(struct i2c_client *client, int16_t* buf)
 {
+    size_t i;
+    int res;
     uint8_t reg = ADXL345_DATAX0_REG;
     uint8_t data[6];
     struct i2c_msg msg[2] = {
@@ -198,9 +266,17 @@ static int ADXL345_read_axis(struct i2c_client *client, int16_t* buf)
         }
     };
 
-    int ret = i2c_transfer(client->adapter, msg, 2);
+    res = mutex_lock_killable(&i2c_lock);
 
-    size_t i;
+    if (res != 0){
+        printk(KERN_WARNING "Process with pid %d killed while taking the lock in i2c", current->pid);
+        return res;
+    }
+
+    res = i2c_transfer(client->adapter, msg, 2);
+
+    mutex_unlock(&i2c_lock);
+    
     for (i = 0; i < 6; i += 2)
     {
         int16_t raw = data[i + 1];
@@ -208,7 +284,7 @@ static int ADXL345_read_axis(struct i2c_client *client, int16_t* buf)
         buf[i / 2] = raw;
     }
 
-    return ret;
+    return res;
 }
 
 static bool data_is_available(struct adxl345_device* dev)
@@ -397,25 +473,41 @@ ssize_t adxl345_read(struct file * file, char __user * buf, size_t count, loff_t
     pid = current->pid;
     sub = find_subscriber(pid);
 
+    printk(KERN_INFO "Read %d bytes by pid %d\n", count, current->pid);
+
     if (sub == NULL)
     {
         printk(KERN_ERR "READ called, but pid %d is not registered!\n", pid);
         return -ESRCH;
     }
+
     read_offset = 0;
 
     while (read_offset != count){
         char* data_pointer;
         int res;
 
+        res = mutex_lock_killable(&fifo_read_lock);
+
+        if (res != 0){
+            return res; // Normally only -EINTR
+        }
+
         res = kfifo_get(&(dev->fifo_samples), &el);
 
         printk(KERN_INFO "In FIFO: %d\n", kfifo_avail(&(dev->fifo_samples)));
+        mutex_unlock(&fifo_read_lock);
 
         if (res == 0)
         {
             printk(KERN_INFO "Not enough data, sleeping\n");
-            wait_event_killable(dev->queue, data_is_available(dev));
+            res = wait_event_killable(dev->queue, data_is_available(dev));
+
+            if (res != 0){
+                printk(KERN_INFO "Process with pid %d killed while waiting for data\n", current->pid);
+                return res;
+            }
+
             printk(KERN_INFO "Data available, wake up\n");
             continue;
         }

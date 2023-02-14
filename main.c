@@ -17,6 +17,11 @@ typedef enum {
 } adxl_axis_t;
 
 int main(){
+    fork();
+    fork();
+    fork();
+
+
     int fd = open("/dev/adxl345-0", O_RDWR);
     if (fd < 0)
     {
@@ -40,6 +45,11 @@ int main(){
 
         for (int j = 0; j < count; j++) {
             ret = read(fd, buffer, 2);
+
+            if (ret < 0){
+                return -1;
+            }
+
             short actual_value = buffer[1] << 8 | buffer[0];
             printf("Read value of %d is : %hi\n", getpid(), actual_value);
         }
